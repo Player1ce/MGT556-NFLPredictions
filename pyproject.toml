@@ -1,0 +1,12 @@
+[project]
+name = "mgt556-nflpredictions"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "ipykernel>=7.2.0",
+    "matplotlib>=3.10.8",
+    "nflreadpy>=0.1.5",
+    "pandas>=3.0.0",
+    "pandas-stubs~=3.0.0",
+]
