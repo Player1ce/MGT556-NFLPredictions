@@ -82,7 +82,7 @@ def get_combined_data(start_season=2016, end_season=2025) -> pl.DataFrame:
 
     return combined_frame
 
-
+# TODO: adjust scoring to avg score and account for season games change (2022?)
 def add_fantasy_scoring_inplace(frame):
     # create scoring column
 
