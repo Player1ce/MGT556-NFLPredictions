@@ -1,11 +1,16 @@
-import matplotlib.pyplot as plt
-import nflreadpy as nfl
 import pathlib
+import requests
+from bs4 import BeautifulSoup
 
+import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from lib import preset_selections as ps
+import pandas as pd
+import lxml
 
+import nflreadpy as nfl
+
+from lib import preset_selections as ps
 
 def get_player_fantasy_sheet(start_season=2016, end_season=2025) -> pl.DataFrame:
     # Shared variables
@@ -159,3 +164,40 @@ def plot_histogram(df, col1, bins=30):
 
     plt.tight_layout()
     plt.show()
+
+def get_num_games_season_wikepedia():
+    tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_NFL_seasons')
+    return tables[3]
+
+if __name__ == '__main__':
+
+    url = 'https://en.wikipedia.org/wiki/List_of_NFL_seasons'
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    response = requests.get(url, headers=headers)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Find Wikipedia tables (they have specific classes)
+    tables = soup.find_all('table', class_='wikitable')
+    print(f"Found {len(tables)} wikitable(s)")
+
+    # Extract first NFL seasons table
+    table = tables[2]  # Adjust index as needed
+    rows = []
+
+    # for index, table in enumerate(tables):
+    #     df_table = pl.from_pandas(pd.read_html(table.text)[0])
+    #     print("Index:", index, "Shape:", table.shape)
+    #     print(df_table.head())
+
+
+    for row in table.find_all('tr'):
+        cells = [cell.get_text(strip=True) for cell in row.find_all(['td'])]
+
+        if cells:  # Skip empty rows
+
+            rows.append(cells)
+
+    df = pd.DataFrame(rows[1:], columns=rows[0])  # First row = headers
+    print(df.head())
+    print(df.shape)
