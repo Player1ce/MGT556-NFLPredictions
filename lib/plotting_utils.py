@@ -1,10 +1,13 @@
-
-
-import polars as ps
 import pandas as pd
+import polars as pl
 import matplotlib.pyplot as plt
 
-def plot_histogram(df, col1, bins=30):
+
+def plot_histogram(
+        df: pl.DataFrame | pd.DataFrame,
+        col1: str,
+        bins: int=30
+) -> None:
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
 
     # Single histogram

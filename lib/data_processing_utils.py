@@ -1,6 +1,7 @@
 import math
 import pathlib
 from math import nan
+from typing import Sequence
 
 import requests
 from bs4 import BeautifulSoup
@@ -10,8 +11,26 @@ import polars as pl
 import pandas as pd
 
 import nflreadpy as nfl
+from polars import Expr
 
 from lib import preset_selections as presets
+from lib import file_utils as futils
+
+
+def debug_pipeline(pipeline: pl.LazyFrame, stage: str = "final"):
+    print(f"\n=== {stage} ===")
+    print("PLAN:", pipeline.explain(optimized=True))
+    return pipeline
+
+def collect_and_print_profile(pipeline: pl.LazyFrame) -> pl.DataFrame:
+    result, profile = pipeline.profile()
+
+    # print a pretty summary of the performance of the operations
+
+    with pl.Config(tbl_rows=-1):
+        print(profile.with_columns((pl.col('end')-pl.col('start')).alias('duration_ms')))
+
+    return result
 
 
 def get_player_fantasy_sheet(
@@ -19,7 +38,7 @@ def get_player_fantasy_sheet(
         end_season=2025,
         positions_to_retrieve=presets.player_fantasy_positions,
         cols_to_retrieve=presets.player_fantasy_cols
-) -> pl.DataFrame:
+) -> pl.LazyFrame:
     # Shared variables
 
     # seasons to retrieve data for
@@ -36,14 +55,14 @@ def get_player_fantasy_sheet(
                                 .sort(['season', 'position'])
                                 )
 
-    return get_relevant_player_data.collect()
+    return get_relevant_player_data
 
 
 def get_team_fantasy_sheet(
         start_season=2016,
         end_season=2025,
         cols_to_retrieve=presets.team_fantasy_dst_cols
-) -> pl.DataFrame:
+) -> pl.LazyFrame:
     seasons_to_retrieve = list(range(start_season, end_season + 1))
 
     # Team Data
@@ -57,20 +76,19 @@ def get_team_fantasy_sheet(
         .sort(['season'])
     )
 
-    return get_relevant_team_data.collect()
+    return get_relevant_team_data
 
-def add_id_col(frame : pl.DataFrame) -> pl.DataFrame:
 
-    assert all(col in frame.columns for col in ['player_id', 'team'])
+def add_id_col(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+    # assert all(col in frame.columns for col in ['player_id', 'team'])
 
-    # add a single id column to act as a combined key with season
-    return (frame.with_columns(
+    # add a single id column to act as a combined unique key with season
+    return (frame.lazy().with_columns(
         pl.when(pl.col('player_id').str.len_chars() > 0)
         .then(pl.col('player_id'))
         .otherwise(pl.col('team'))
         .alias('id')
     ))
-
 
 
 def get_combined_data(
@@ -79,7 +97,7 @@ def get_combined_data(
         player_positions_to_retrieve=presets.player_fantasy_positions,
         player_cols_to_retrieve=presets.player_fantasy_cols,
         team_cols_to_retrieve=presets.team_fantasy_dst_cols
-) -> pl.DataFrame:
+) -> pl.LazyFrame:
     # Shared variables
 
     player_data = get_player_fantasy_sheet(
@@ -88,6 +106,7 @@ def get_combined_data(
         player_positions_to_retrieve,
         player_cols_to_retrieve
     )
+
     team_data = get_team_fantasy_sheet(
         start_season,
         end_season,
@@ -98,7 +117,7 @@ def get_combined_data(
 
     frames = [
         frame.rename({'recent_team': 'team'})
-        if 'recent_team' in frame.columns
+        if 'recent_team' in frame.collect_schema().names()
         else frame
         for frame in frames
     ]
@@ -118,13 +137,12 @@ def get_combined_data(
 
 
 # TODO: adjust scoring to avg score and account for season games change (2022?)
-def add_fantasy_scoring_inplace(frame):
+def add_fantasy_scoring(frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame:
     # create scoring column
 
-    assert all(col in frame.columns for col in presets.combined_fantasy_columns)
+    # assert all(col in frame.columns for col in presets.combined_fantasy_columns)
 
     class_scoring_expression = (
-
         # passing
             pl.col("passing_yards") / 25
             + pl.col("passing_tds") * 4
@@ -161,11 +179,11 @@ def add_fantasy_scoring_inplace(frame):
 
     ).clip(lower_bound=0).alias("class_ppr_score")
 
-    frame.insert_column(len(frame.columns), class_scoring_expression)
+    return frame.lazy().with_columns(class_scoring_expression)
 
-def add_log_column(frame, column):
-    frame.insert_column(
-        len(frame.columns),
+
+def add_log_column(frame: pl.LazyFrame | pl.DataFrame, column) -> pl.LazyFrame:
+    return frame.lazy().with_columns(
         pl.when(pl.col(column) > 0)
         .then(np.log1p(pl.col(column)))
         .when(pl.col(column) <= 0)
@@ -174,14 +192,15 @@ def add_log_column(frame, column):
         .alias(f'log1p_{column}')
     )
 
+
 def shift_column_by_season(
-        frame : pl.DataFrame,
-        col_name : str,
-        shift = -1,
+        frame: pl.DataFrame | pl.LazyFrame,
+        col_name: str,
+        shift=-1,
         id_col='id',
         null_replacement=None,
-        nan_replacement=nan
-) -> pl.DataFrame:
+        nan_replacement=None
+) -> pl.LazyFrame:
     '''
     Shifts the specified column forward or backward shift number of seasons and puts the result in a new column named future_col_name or past_col_name.
     Requires an ID col to exist in the data to use as a key along with season for matching
@@ -204,20 +223,18 @@ def shift_column_by_season(
     if abs(shift > 1):
         prefix = f'{prefix}{abs(shift)}'
 
-    season_shift = frame.select([
-        pl.col(id_col),
-        (pl.col("season") + shift),
-        pl.col(col_name).alias(f'{prefix}_{col_name}'),
-    ]
-    )
-
-    result = frame.join(
-        season_shift,
+    result = (frame.lazy()
+    .join(
+        frame.lazy().select([
+            pl.col(id_col),
+            (pl.col("season") + shift),
+            pl.col(col_name).alias(f'{prefix}_{col_name}'),
+        ]),
         on=[pl.col('id'), pl.col("season")],
         how='left'
-    )
+    ))
 
-    if not math.isnan(nan_replacement):
+    if nan_replacement is not None:
         result = result.fill_nan(nan_replacement)
 
     if null_replacement is not None:
@@ -226,26 +243,24 @@ def shift_column_by_season(
     return result
 
 
-def output_result_frame(frame: pl.DataFrame, name: str):
-    # output as parquet, csv, and excel
-    print(frame.write_csv(pathlib.Path.cwd() / "output" / str(name + ".csv"), include_header=True))
-    print(frame.write_excel(pathlib.Path.cwd() / "output" / str(name + ".xlsx"), include_header=True))
-    print(frame.write_parquet(pathlib.Path.cwd() / "output" / str(name + ".parquet")))
+def left_join_from_source(
+        frame: pl.LazyFrame | pl.DataFrame,
+        file_title: str,
+        file_type: futils.FileType,
+        columns: Sequence[str],
+        on: str | Expr | Sequence[str | Expr] | None = None,
+        left_on: str | Expr | Sequence[str | Expr] | None = None,
+        right_on: str | Expr | Sequence[str | Expr] | None = None) -> pl.LazyFrame:
+    if left_on is None and right_on is None and on is None:
+        raise ValueError("Must specify either left_on and right_on, or on")
 
-def output_source_frame(frame: pl.DataFrame, name: str):
-    # output as parquet, csv, and excel
-    print(frame.write_csv(pathlib.Path.cwd() / "data" / str(name + ".csv"), include_header=True))
-    print(frame.write_parquet(pathlib.Path.cwd() / "data" / str(name + ".parquet")))
-
-
-
-def get_num_games_season_wikepedia():
-    tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_NFL_seasons')
-    return tables[3]
-
-def left_join_from_excel_source(frame: pl.DataFrame, source_name: str):
-    source = pl.read_excel(pathlib.Path.cwd() / "data" / str(source_name + ".xlsx"))
-
+    return frame.lazy().join(
+        futils.read_source_frame(file_title, file_type).lazy().select(columns),
+        on=on,
+        left_on=left_on,
+        right_on=right_on,
+        how='left'
+    )
 
 
 if __name__ == '__main__':
