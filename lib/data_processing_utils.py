@@ -165,7 +165,6 @@ def add_fantasy_scoring_inplace(frame):
 
     frame.insert_column(len(frame.columns), class_scoring_expression)
 
-
 def add_log_column(frame, column):
     frame.insert_column(
         len(frame.columns),
@@ -176,8 +175,6 @@ def add_log_column(frame, column):
         .otherwise(None)
         .alias(f'log1p_{column}')
     )
-
-
 
 def shift_column_by_season(
         frame : pl.DataFrame,
@@ -231,17 +228,26 @@ def shift_column_by_season(
     return result
 
 
-def output_frame(frame: pl.DataFrame, path: pathlib.Path):
-    # output as parquet and csv
-    print(frame.write_csv(str(path) + ".csv", include_header=True))
-    print(frame.write_excel(str(path) + ".xlsx", include_header=True))
-    print(frame.write_parquet(str(path) + ".parquet"))
+def output_result_frame(frame: pl.DataFrame, name: str):
+    # output as parquet, csv, and excel
+    print(frame.write_csv(pathlib.Path.cwd() / "output" / str(name + ".csv"), include_header=True))
+    print(frame.write_excel(pathlib.Path.cwd() / "output" / str(name + ".xlsx"), include_header=True))
+    print(frame.write_parquet(pathlib.Path.cwd() / "output" / str(name + ".parquet")))
+
+def output_source_frame(frame: pl.DataFrame, name: str):
+    # output as parquet, csv, and excel
+    print(frame.write_csv(pathlib.Path.cwd() / "data" / str(name + ".csv"), include_header=True))
+    print(frame.write_parquet(pathlib.Path.cwd() / "data" / str(name + ".parquet")))
 
 
 
 def get_num_games_season_wikepedia():
     tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_NFL_seasons')
     return tables[3]
+
+def left_join_from_excel_source(frame: pl.DataFrame, source_name: str):
+    source = pl.read_excel(pathlib.Path.cwd() / "data" / str(source_name + ".xlsx"))
+
 
 
 if __name__ == '__main__':
