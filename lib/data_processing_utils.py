@@ -28,7 +28,7 @@ def collect_and_print_profile(pipeline: pl.LazyFrame) -> pl.DataFrame:
     # print a pretty summary of the performance of the operations
 
     with pl.Config(tbl_rows=-1):
-        print(profile.with_columns((pl.col('end') - pl.col('start')).alias('duration_ms')))
+        print(profile.with_columns(((pl.col('end') - pl.col('start'))/1000).alias('duration_ms')))
 
     return result
 
