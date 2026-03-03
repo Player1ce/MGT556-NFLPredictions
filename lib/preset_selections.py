@@ -6,6 +6,15 @@ max_end_year = 2025
 # player positions needed for fantasy scoring metrics
 player_fantasy_positions = ['TE', 'QB', 'WR', 'K', 'RB']
 
+position_groups = {
+    "skill": ["QB", "RB", "WR"],  # Premium starters
+    "pass_catch": ["RB", "WR", "TE"],  # PPR focus
+    "te": ["TE"],  # Premium TE only
+    "kicker": ["K"],
+    "defense": ["DST"],  # D/ST or DST
+    "flex": ["RB", "WR", "TE"]  # Flex eligibility
+}
+
 # fantasy scoring fields (with a few extra for info)
 player_fantasy_cols = [
     # Player identification

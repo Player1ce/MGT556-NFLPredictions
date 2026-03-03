@@ -45,6 +45,15 @@ def add_id_col(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
     ))
 
 
+def add_key_col(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+    return (frame.lazy().with_columns(
+        pl.when(pl.col('player_id').str.len_chars() > 0)
+        .then(pl.col('player_id') + str(pl.col("season")))
+        .otherwise(pl.col('team') + str(pl.col("season")))
+        .alias('key')
+    ))
+
+
 def get_combined_data(
         start_season=2016,
         end_season=2025,
@@ -81,6 +90,7 @@ def get_combined_data(
                       .fill_null(strategy='zero'))
 
     combined_frame = add_id_col(combined_frame)
+    combined_frame = add_key_col(combined_frame)
 
     # print(f"nulls: {combined_frame.null_count().sum_horizontal()}")
 
@@ -88,6 +98,72 @@ def get_combined_data(
     #     print(f"Column: {column} | Dtype: {combined_frame[column].dtype}")
 
     return combined_frame
+
+
+def add_ranking_column(
+        frame: pl.LazyFrame | pl.DataFrame,
+        ranking_col: str,
+        new_col_name: str,
+        group_cols: list[str] | None = None,
+) -> pl.LazyFrame:
+    if group_cols is None:
+        return frame.lazy().with_columns(
+            [
+                pl.col(ranking_col)
+                .rank('average', descending=True)
+                .alias(new_col_name),
+            ])
+
+    else:
+        return frame.lazy().with_columns(
+            [
+                pl.col(ranking_col)
+                .rank('average', descending=True)
+                .over(group_cols)
+                .alias(new_col_name),
+            ])
+
+
+def add_position_group_ranking_column(
+        frame: pl.LazyFrame | pl.DataFrame,
+        group_name: str,
+        group: list[str],
+        ranking_col: str = 'class_ppr_score',
+) -> pl.LazyFrame:
+    new_col_name = f'{ranking_col}_{group_name}_ranking'
+
+    return frame.lazy().with_columns([
+        pl.when(pl.col("position").is_in(group))
+        .then(pl.col("class_ppr_score").rank(method='average', descending=True).over('season'))
+        .otherwise(None)
+        .alias(new_col_name)
+    ])
+    # filter and rank
+    ranked_group = (frame.lazy()
+        .filter(pl.col("position").is_in(group))
+        .with_columns([
+            pl.col(ranking_col)
+            .rank(method="dense", descending=True)
+            .alias(new_col_name)
+        ])
+        .select([key_col, new_col_name])  # Only key + rank
+    )
+
+    # join ranking back
+    return frame.lazy().join(ranked_group, on=key_col, how='left')
+
+
+def add_position_group_ranking_columns(
+        frame: pl.LazyFrame | pl.DataFrame,
+) -> pl.LazyFrame:
+    result = frame.lazy()
+
+    for group_name, group in presets.position_groups.items():
+        result = add_position_group_ranking_column(
+            result, group_name, group
+        )
+
+    return result
 
 
 # TODO: adjust scoring to avg score and account for season games change (2022?)
