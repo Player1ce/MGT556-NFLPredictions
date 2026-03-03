@@ -1,5 +1,8 @@
 # Player Data
 
+min_start_year = 1999
+max_end_year = 2025
+
 # player positions needed for fantasy scoring metrics
 player_fantasy_positions = ['TE', 'QB', 'WR', 'K', 'RB']
 

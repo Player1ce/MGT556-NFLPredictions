@@ -58,11 +58,11 @@ def read_frame_from_path(
 
     match file_type:
         case FileType.CSV:
-            return pl.read_csv(file_path)
+            return pl.read_csv(str(file_path) + "." + FileType.CSV.value)
         case FileType.PARQUET:
-            return pl.read_parquet(file_path)
+            return pl.read_parquet(str(file_path) + "." + FileType.PARQUET.value)
         case FileType.EXCEL:
-            return pl.read_excel(file_path)
+            return pl.read_excel(str(file_path) + "." + FileType.EXCEL.value)
         case _:
             raise ValueError("Unrecognized file type")
 

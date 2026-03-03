@@ -1,6 +1,3 @@
-import math
-import pathlib
-from math import nan
 from typing import Sequence
 
 import requests
@@ -12,9 +9,11 @@ import pandas as pd
 
 import nflreadpy as nfl
 from polars import Expr
+from polars._typing import JoinStrategy
 
 from lib import preset_selections as presets
 from lib import file_utils as futils
+from lib import data_fetching_utils as df_utils
 
 
 def debug_pipeline(pipeline: pl.LazyFrame, stage: str = "final"):
@@ -22,61 +21,16 @@ def debug_pipeline(pipeline: pl.LazyFrame, stage: str = "final"):
     print("PLAN:", pipeline.explain(optimized=True))
     return pipeline
 
+
 def collect_and_print_profile(pipeline: pl.LazyFrame) -> pl.DataFrame:
     result, profile = pipeline.profile()
 
     # print a pretty summary of the performance of the operations
 
     with pl.Config(tbl_rows=-1):
-        print(profile.with_columns((pl.col('end')-pl.col('start')).alias('duration_ms')))
+        print(profile.with_columns((pl.col('end') - pl.col('start')).alias('duration_ms')))
 
     return result
-
-
-def get_player_fantasy_sheet(
-        start_season=2016,
-        end_season=2025,
-        positions_to_retrieve=presets.player_fantasy_positions,
-        cols_to_retrieve=presets.player_fantasy_cols
-) -> pl.LazyFrame:
-    # Shared variables
-
-    # seasons to retrieve data for
-    seasons_to_retrieve = list(range(start_season, end_season + 1))
-
-    # Player Data
-
-    # create a query to get the relevant data
-    get_relevant_player_data = (nfl.load_player_stats(
-        seasons=seasons_to_retrieve,
-        summary_level="reg"
-    )[cols_to_retrieve].lazy()
-                                .filter(pl.col('position').is_in(positions_to_retrieve))
-                                .sort(['season', 'position'])
-                                )
-
-    return get_relevant_player_data
-
-
-def get_team_fantasy_sheet(
-        start_season=2016,
-        end_season=2025,
-        cols_to_retrieve=presets.team_fantasy_dst_cols
-) -> pl.LazyFrame:
-    seasons_to_retrieve = list(range(start_season, end_season + 1))
-
-    # Team Data
-
-    # retrieve and export team data for chosen seasons
-    get_relevant_team_data = (
-        nfl.load_team_stats(
-            seasons=seasons_to_retrieve,
-            summary_level="reg"
-        )[cols_to_retrieve].lazy()
-        .sort(['season'])
-    )
-
-    return get_relevant_team_data
 
 
 def add_id_col(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
@@ -100,14 +54,14 @@ def get_combined_data(
 ) -> pl.LazyFrame:
     # Shared variables
 
-    player_data = get_player_fantasy_sheet(
+    player_data = df_utils.get_player_fantasy_sheet(
         start_season,
         end_season,
         player_positions_to_retrieve,
         player_cols_to_retrieve
     )
 
-    team_data = get_team_fantasy_sheet(
+    team_data = df_utils.get_team_fantasy_sheet(
         start_season,
         end_season,
         team_cols_to_retrieve
@@ -243,22 +197,49 @@ def shift_column_by_season(
     return result
 
 
-def left_join_from_source(
+def join_from_source(
         frame: pl.LazyFrame | pl.DataFrame,
         file_title: str,
         file_type: futils.FileType,
-        columns: Sequence[str],
+        columns: Sequence[str] | None = None,
+        how: JoinStrategy = 'inner',
         on: str | Expr | Sequence[str | Expr] | None = None,
         left_on: str | Expr | Sequence[str | Expr] | None = None,
-        right_on: str | Expr | Sequence[str | Expr] | None = None) -> pl.LazyFrame:
+        right_on: str | Expr | Sequence[str | Expr] | None = None,
+) -> pl.LazyFrame:
     if left_on is None and right_on is None and on is None:
         raise ValueError("Must specify either left_on and right_on, or on")
 
+    source = futils.read_source_frame(file_title, file_type).lazy()
+    if columns is not None:
+        source = source.select(columns)
+
     return frame.lazy().join(
-        futils.read_source_frame(file_title, file_type).lazy().select(columns),
+        source,
+        how=how,
         on=on,
         left_on=left_on,
         right_on=right_on,
+    )
+
+
+def add_season_aggregate_stats(
+        frame: pl.LazyFrame | pl.DataFrame,
+        stat_names: Sequence[str] | None = 'num_games',
+) -> pl.LazyFrame:
+    season_data = df_utils.get_season_aggregate_data(
+        presets.min_start_year,
+        presets.max_end_year
+    ).lazy()
+
+    if stat_names is not None:
+        if 'season' not in stat_names:
+            stat_names = list(stat_names) + ['season']
+        season_data = season_data.select(stat_names)
+
+    return frame.lazy().join(
+        season_data,
+        on='season',
         how='left'
     )
 
